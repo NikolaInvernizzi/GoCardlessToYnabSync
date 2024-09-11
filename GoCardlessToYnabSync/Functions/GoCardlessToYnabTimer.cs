@@ -22,7 +22,7 @@ namespace GoCardlessToYnabSync.Functions
         // 0 0 */4 * * * = once every 4 hours
 
         [Function("GoCardlessToYnabTimer")]
-        public async Task Run([TimerTrigger("0 0 */4 * * *")] TimerInfo myTimer)
+        public async Task Run([TimerTrigger("0 0 2,9,13,16,19,22 * * *")] TimerInfo myTimer)
         {
             _logger.LogInformation($"Starting up GoCardLessSync with timer function: {DateTime.Now}");
 
