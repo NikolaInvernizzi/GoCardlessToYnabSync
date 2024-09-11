@@ -5,6 +5,7 @@ using GoCardlessToYnabSync.Models;
 using RobinTTY.NordigenApiClient.Models;
 using RobinTTY.NordigenApiClient;
 using GoCardlessToYnabSync.Options;
+using Microsoft.IdentityModel.Tokens;
 
 namespace GoCardlessToYnabSync.Services
 {
@@ -121,47 +122,93 @@ namespace GoCardlessToYnabSync.Services
                                                             DateOnly.FromDateTime(transactionSince));
             if (transactionsResponse.IsSuccess)
             {
-                var groupedByEntryReference = transactionsResponse.Result.BookedTransactions.ToList().GroupBy(x => x.EntryReference);
-                
+                if (transactionsResponse.Result.BookedTransactions.Count() == 0)
+                {
+                    return "No transaction retrieved from gocardless";
+                }
+
+                List<IGrouping<string, RobinTTY.NordigenApiClient.Models.Responses.Transaction>> groupedByEntryReference = transactionsResponse.Result.BookedTransactions
+                                                                        .Where(x => !string.IsNullOrWhiteSpace(x.EntryReference))
+                                                                        .GroupBy(x => x.EntryReference ?? "")
+                                                                        .ToList();
+                if(groupedByEntryReference is null)
+                {
+                    return "Grouped gocardless transactions list is null, how??";
+                }
+
                 var transactions = new List<Transaction>();
                 var errors = new List<string>();
-                foreach (var item in groupedByEntryReference)
+                foreach (var item in groupedByEntryReference.Where(x => x.Key is not null).ToList())
                 {
                     try
                     {
+                        if (item is null)
+                            return "item in Grouped gocardless transactions was null";
+
                         if (item.Key is null)
                         {
-                            throw new Exception($"key is null");
+                            errors.Add($"key is null");
                         }
 
-                        if (item.All(x => !x.BookingDate.HasValue))
+                        if (item.Count() == 0)
                         {
-                            throw new Exception($"{item.Key}: bookingdate has no value");
-                        }
-                        if (item.All(x => string.IsNullOrWhiteSpace(x.AdditionalInformation)))
-                        {
-                            throw new Exception($"{item.Key}: additional info is empty");
+                            errors.Add($"{item.Key}: has no items");
                         }
 
-                        transactions.Add(new Transaction
+                        if (item.Any(x => !x.BookingDate.HasValue))
                         {
-                            Id = Guid.NewGuid().ToString(),
-                            EntryReference = item.Key,
-                            BookingDate = item.First().BookingDate!.Value,
-                            TransactionObject = item.First(x => x.AdditionalInformation!.Contains("statementReference")),
-                            SyncedOn = null
-                        });
+                            errors.Add($"{item.Key}: bookingdate1 has no value");
+                        }
+                        var bookingdate = item.FirstOrDefault()?.BookingDate;
+                        if (!bookingdate.HasValue)
+                        {
+                            errors.Add($"{item.Key}: bookingdate2 has no value");
+                        }
 
-                    }catch(Exception ex)
+                        if (item.Any(x => string.IsNullOrWhiteSpace(x.AdditionalInformation)))
+                        {
+                            errors.Add($"{item.Key}: additional info1 is empty");
+                        }
+                        var additionalInformation = item.FirstOrDefault(x => x.AdditionalInformation!.Contains("statementReference"));
+                        if (additionalInformation is null || string.IsNullOrWhiteSpace(additionalInformation.AdditionalInformation))
+                        {
+                            // if no statementreference is available its because the transaction is not complete yet,
+                            // wait with adding it to transaction till there is a statementreference
+                            continue;
+                        }
+
+                        if (errors.Count == 0 && item?.Key is not null)
+                        {
+
+                            if (bookingdate.HasValue && additionalInformation is not null)
+                            {
+                                transactions.Add(new Transaction
+                                {
+                                    Id = Guid.NewGuid().ToString(),
+                                    EntryReference = item.Key,
+                                    BookingDate = bookingdate.Value,
+                                    TransactionObject = additionalInformation,
+                                    SyncedOn = null
+                                });
+                            }
+                            else
+                            {
+                                errors.Add($"{item.Key}: booking date is null or additional information is null");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
                     {
-                        errors.Add($"{ex.Message}");
+                        errors.Add($" exception: {ex.Message}");
                     }
                 }
+
                 if(errors.Count > 0)
                 {
                     SendFailedNewRequisitionMail(string.Join(", ", errors), "errors occured when creating transactions");
-                    return $"error occured when creating transaction to add to db: {string.Join(',', errors)}";
+                    return $"error occured when creating transaction to add to db: {string.Join('\n', errors)}";
                 }
+
                 List<Transaction> existingTransactions = await _cosmosDbService.GetTransactionsSince(transactionSince.AddDays(-7));
                 var existingEntryReferences = existingTransactions.Select(t => t.EntryReference).ToList();
                 transactions = transactions.Where(t => !existingEntryReferences.Contains(t.EntryReference)).ToList();
