@@ -13,12 +13,14 @@ namespace GoCardlessToYnabSync.Functions
         private readonly ILogger<GoCardlessSync> _logger;
         private readonly IConfiguration _configuration;
         private readonly GoCardlessSyncService _goCardlessSyncService;
+        private readonly MailService _mailService;
 
-        public GoCardlessSync(ILogger<GoCardlessSync> logger, IConfiguration configuration, GoCardlessSyncService goCardlessSyncService)
+        public GoCardlessSync(ILogger<GoCardlessSync> logger, IConfiguration configuration, GoCardlessSyncService goCardlessSyncService, MailService mailService)
         {
             _logger = logger;
             _configuration = configuration;
             _goCardlessSyncService = goCardlessSyncService;
+            _mailService = mailService;
         }
 
         [Function("GoCardlessSync")]
@@ -26,17 +28,22 @@ namespace GoCardlessToYnabSync.Functions
         {
             _logger.LogInformation("GoCardlessSync HTTP function triggered");
 
-            var result = await _goCardlessSyncService.PullTransactionsFromGoCardless();
+            var goCardlessSyncResult = await _goCardlessSyncService.PullTransactionsFromGoCardless();
 
             var functionUris = new FunctionUriOptions();
             _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
 
-            var client = new HttpClient();
-            var clientResult = await client.GetAsync(functionUris.YnabSync);
-            var content = await clientResult.Content.ReadAsStringAsync();
-            client.Dispose();
+            var ynabClient = new HttpClient();
+            var ynabClientResult = await ynabClient.GetAsync(functionUris.YnabSync);
+            var ynabSyncResultContent = await ynabClientResult.Content.ReadAsStringAsync();
+            ynabClient.Dispose();
 
-            return new OkObjectResult($"GoCardlessSync result: {result}\nYnabSync result: {content}");
+            if (int.TryParse(ynabSyncResultContent, out var count) && count > 0)
+            {
+                _mailService.SendMail($"{count} items have been synced to ynab and need to be categorized.", $"{count} items synced to ynab");
+            }
+
+            return new OkObjectResult($"GoCardlessSync result: \t{goCardlessSyncResult}\nYnabSync result: \t\t{ynabSyncResultContent}");
         }
     }
 }

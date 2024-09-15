@@ -14,6 +14,7 @@ var host = new HostBuilder()
         services.AddTransient<GoCardlessSyncService>();
         services.AddTransient<YnabSyncService>();
         services.AddSingleton<CosmosDbService>();
+        services.AddSingleton<MailService>();
     })
     .ConfigureAppConfiguration((context, builder) =>
     {

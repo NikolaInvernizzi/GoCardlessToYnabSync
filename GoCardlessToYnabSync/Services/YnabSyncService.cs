@@ -15,10 +15,12 @@ namespace GoCardlessToYnabSync.Services
     public class YnabSyncService
     {
         private readonly IConfiguration _configuration;
+        private readonly MailService _mailService;
         private readonly CosmosDbService _cosmosDbService;
 
-        public YnabSyncService(IConfiguration configuration, CosmosDbService cosmosDbService) {
+        public YnabSyncService(IConfiguration configuration, MailService mailService, CosmosDbService cosmosDbService) {
             _configuration = configuration;
+            _mailService = mailService;
             _cosmosDbService = cosmosDbService;
         }
 
@@ -30,7 +32,7 @@ namespace GoCardlessToYnabSync.Services
                 var transactions = await GetTransactions();
                 if(transactions.Count == 0)
                 {
-                    return "nothing to sync";
+                    return "Nothing to sync";
                 }
                 var result = await PushTransactionsToYnab(transactions);
 
@@ -38,6 +40,8 @@ namespace GoCardlessToYnabSync.Services
             }
             catch (Exception ex)
             {
+
+                _mailService.SendMail(ex.Message, " FAIL - Error throw in PullTransactionsFromGoCardless");
                 return ex.Message;
             }
         }
@@ -89,10 +93,15 @@ namespace GoCardlessToYnabSync.Services
             {
                 return "MOBIELE BETALING (P2P)";
             }
+            else if (firstPart.Equals("STORTING VAN", StringComparison.InvariantCultureIgnoreCase))
+            {
+                if (stringArray.Count >= 2)
+                    return stringArray.ElementAt(2 - 1);
+            }
             else
             {
-                if(stringArray.Count >= 3)
-                    return stringArray.ElementAt(3-1);
+                if (stringArray.Count >= 3)
+                    return stringArray.ElementAt(3 - 1);
             }
 
             return "";
@@ -112,43 +121,12 @@ namespace GoCardlessToYnabSync.Services
             var accounts = ynabClient.GetAccountsAsync(ynabOptions.BudgetId, null).Result;
             var accountId = accounts.Data.Accounts.FirstOrDefault(a => a.Name.Equals(ynabOptions.AccountName, StringComparison.InvariantCultureIgnoreCase))?.Id;
 
-            if (accountId is null)
-                return "No account found";
-
-
-            var saveTransactions = new List<SaveTransaction>();
-
-            foreach (var t in transactions)
+            if (!accountId.HasValue || accountId.Value.ToString().Equals(new Guid().ToString()))
             {
-                var tObj = t.TransactionObject;
-
-                //if(tObj.DebtorName is null && tObj.CreditorName is null)
-                //{
-                //}else if (!string.IsNullOrWhiteSpace(tObj.DebtorName))
-                //{
-                //    amount = tObj.TransactionAmount.Amount;
-                //}
-                //else if (!string.IsNullOrWhiteSpace(tObj.CreditorName))
-                //{
-                //    amount = tObj.TransactionAmount.Amount;
-                //}
-                //else
-                //{
-                //    amount = tObj.TransactionAmount.Amount;
-                //}
-
-                decimal amount = tObj.TransactionAmount.Amount;
-                var payee = GetPayee(tObj.AdditionalInformation);
-
-                saveTransactions.Add(new SaveTransaction
-                {
-                    Account_id = accountId,
-                    Amount = Convert.ToInt64(amount * 1000), // milliunits
-                    Date = t.BookingDate,
-                    Payee_name = payee,
-                    Memo = tObj.AdditionalInformation
-                });
+                throw new Exception($"AccountId not found in ynab for BudgetId {ynabOptions.BudgetId} and accountname {ynabOptions.AccountName}");
             }
+
+            var saveTransactions = BuildTransactions(transactions, accountId.Value);
 
             var createdTransResponse = await ynabClient.CreateTransactionAsync(ynabOptions.BudgetId, new PostTransactionsWrapper
             {
@@ -156,7 +134,7 @@ namespace GoCardlessToYnabSync.Services
             });
 
             if (createdTransResponse.Data?.Transactions is null)
-                return "No transactions return from ynab";
+                return "No transactions returned from ynab";
 
             var now = DateTime.Now;
             foreach (var item in createdTransResponse.Data.Transactions)
@@ -169,8 +147,30 @@ namespace GoCardlessToYnabSync.Services
             }
 
             await _cosmosDbService.AddOrUpdateTransactions(transactions.Where(x => x.SyncedOn.HasValue).ToList());
-            
+
             return transactions.Count.ToString();
+        }
+
+        private List<SaveTransaction> BuildTransactions(List<Transaction> transactions, Guid accountId)
+        {
+            var newTransactions = new List<SaveTransaction>();
+            foreach (var t in transactions)
+            {
+                var tObj = t.TransactionObject;
+
+                decimal amount = tObj.TransactionAmount.Amount;
+                var payee = GetPayee(tObj.AdditionalInformation);
+
+                newTransactions.Add(new SaveTransaction
+                {
+                    Account_id = accountId,
+                    Amount = Convert.ToInt64(amount * 1000), // milliunits
+                    Date = t.BookingDate,
+                    Payee_name = payee,
+                    Memo = tObj.AdditionalInformation
+                });
+            }
+            return newTransactions;
         }
 
         public async Task<List<Transaction>> GetTransactions()

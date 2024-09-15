@@ -13,11 +13,13 @@ namespace GoCardlessToYnabSync.Services
     {
         private readonly IConfiguration _configuration;
         private readonly CosmosDbService _cosmosDbService;
+        private readonly MailService _mailService;
 
-        public GoCardlessSyncService(IConfiguration configuration, CosmosDbService cosmosDbService) 
+        public GoCardlessSyncService(IConfiguration configuration, CosmosDbService cosmosDbService, MailService mailService) 
         {
             _configuration = configuration;
             _cosmosDbService = cosmosDbService;
+            _mailService = mailService;
         }
 
         public async Task<string> PullTransactionsFromGoCardless()
@@ -35,25 +37,11 @@ namespace GoCardlessToYnabSync.Services
                     {
                         var newReq = await GetNewRequisitionId();
 
-                        if (newReq.RequisitionId is null || newReq.AuthLink is null)
-                        {
-                            throw new Exception($"RequisitionId or AuthLink is null:  '{newReq.RequisitionId}' or '{newReq.AuthLink}'");
-                        }
-
-                        var newRequisition = new Requisition
-                        {
-                            RequisitionId = newReq.RequisitionId,
-                            Valid = false,
-                            LastSyncOn = null,
-                            CreatedOn = DateTime.Now,
-                        };
-                        await _cosmosDbService.AddNewRequisition(newRequisition);
-                        SendAuthMail(newReq.AuthLink, goCardlessOptions.BankId);
-                        return "sent authmail";
+                        return await CreateNewRequisitionId(goCardlessOptions, newReq);
                     }
                     catch (Exception ex)
                     {
-                        SendFailedNewRequisitionMail(ex.Message, "Failed to retrieve new requisition id from gocarddless");
+                        _mailService.SendMail(ex.Message, "Failed to retrieve new requisition id from GoCardless");
                         return ex.Message;
                     }
                 }
@@ -61,49 +49,74 @@ namespace GoCardlessToYnabSync.Services
                 {
 
                     var resultStatus = await GetStatusFromRequisition(requisition);
-                    if (resultStatus.Status is null || resultStatus.Requisition is null)
-                    {
-                        SendFailedNewRequisitionMail("could not retrieve req id", "Failed to retrieve requisition id from gocarddless");
-                        return "cant get status  or requisition id from gocardless";
-                    }
-                    else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Expired)
-                    {
-                        requisition.Valid = false;
-                        await _cosmosDbService.UpdateRequistion(requisition);
-                        SendFailedNewRequisitionMail("req id expired", "Retrieved requisition id from gocarddless is expired");
-                        return await PullTransactionsFromGoCardless();
-                    }
-                    else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.UndergoingAuthentication)
-                    {
-                        SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink", goCardlessOptions.BankId);
-                        return "resend authmail, last requisition id was not authenticated with bank yet";
-                    }
-                    else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Linked)
-                    {
-                        requisition.Valid = true;
-                        requisition = await _cosmosDbService.UpdateRequistion(requisition);
-
-                        var accountId = await GetAccountId(requisition);
-
-                        if (accountId is null)
-                            return "No bank linked to requisition id";
-
-                        return await SyncTransaction(accountId);
-                    }
-                    else
-                    {
-                        SendFailedNewRequisitionMail(resultStatus.Status?.ToString() ?? "STATUS FAILED", "Failed to retrieve requisition id from gocarddless");
-                        requisition.Valid = false;
-                        await _cosmosDbService.UpdateRequistion(requisition);
-                        return await PullTransactionsFromGoCardless();
-                    }
+                    return await ExecuteActionBasedOnStatus(goCardlessOptions, requisition, resultStatus);
                 }
             }
-            catch (Exception ex){
+            catch (Exception ex)
+            {
+                _mailService.SendMail(ex.Message, "GoCardlessToYnabSync Failed: Error throw in PullTransactionsFromGoCardless");
                 return ex.Message;
             }
         }
 
+        private async Task<string> ExecuteActionBasedOnStatus(GoCardlessOptions goCardlessOptions, Requisition requisition, (RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus? Status, RobinTTY.NordigenApiClient.Models.Responses.Requisition? Requisition) resultStatus)
+        {
+            if (resultStatus.Status is null || resultStatus.Requisition is null)
+            {
+                _mailService.SendMail("could not retrieve req id", "Failed to retrieve requisition id from gocarddless");
+                return "cant get status  or requisition id from gocardless";
+            }
+            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Expired)
+            {
+                requisition.Valid = false;
+                await _cosmosDbService.UpdateRequistion(requisition);
+                _mailService.SendMail("req id expired", "Retrieved requisition id from gocarddless is expired");
+                return await PullTransactionsFromGoCardless();
+            }
+            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.UndergoingAuthentication)
+            {
+                _mailService.SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink!!", goCardlessOptions.BankId);
+                return "resend authmail, last requisition id was not authenticated with bank yet";
+            }
+            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Linked)
+            {
+                requisition.Valid = true;
+                requisition = await _cosmosDbService.UpdateRequistion(requisition);
+
+                var accountId = await GetAccountId(requisition);
+
+                if (accountId is null)
+                    return "No bank linked to requisition id";
+
+                return await SyncTransaction(accountId);
+            }
+            else
+            {
+                _mailService.SendMail(resultStatus.Status?.ToString() ?? "STATUS FAILED", "Failed to retrieve requisition id from GoCardless");
+                requisition.Valid = false;
+                await _cosmosDbService.UpdateRequistion(requisition);
+                return await PullTransactionsFromGoCardless();
+            }
+        }
+
+        private async Task<string> CreateNewRequisitionId(GoCardlessOptions goCardlessOptions, (string? RequisitionId, string? AuthLink) newReq)
+        {
+            if (newReq.RequisitionId is null || newReq.AuthLink is null)
+            {
+                throw new Exception($"RequisitionId or AuthLink is null:  '{newReq.RequisitionId}' or '{newReq.AuthLink}'");
+            }
+
+            var newRequisition = new Requisition
+            {
+                RequisitionId = newReq.RequisitionId,
+                Valid = false,
+                LastSyncOn = null,
+                CreatedOn = DateTime.Now,
+            };
+            await _cosmosDbService.AddNewRequisition(newRequisition);
+            _mailService.SendAuthMail(newReq.AuthLink, goCardlessOptions.BankId);
+            return "authmail sent";
+        }
 
         private async Task<string> SyncTransaction(string accountId)
         {
@@ -143,13 +156,13 @@ namespace GoCardlessToYnabSync.Services
                     try
                     {
                         if (item is null)
+                        {
                             return "item in Grouped gocardless transactions was null";
-
+                        }
                         if (item.Key is null)
                         {
                             errors.Add($"key is null");
                         }
-
                         if (item.Count() == 0)
                         {
                             errors.Add($"{item.Key}: has no items");
@@ -179,7 +192,6 @@ namespace GoCardlessToYnabSync.Services
 
                         if (errors.Count == 0 && item?.Key is not null)
                         {
-
                             if (bookingdate.HasValue && additionalInformation is not null)
                             {
                                 transactions.Add(new Transaction
@@ -205,7 +217,7 @@ namespace GoCardlessToYnabSync.Services
 
                 if(errors.Count > 0)
                 {
-                    SendFailedNewRequisitionMail(string.Join(", ", errors), "errors occured when creating transactions");
+                    _mailService.SendMail(string.Join(", ", errors), "errors occured when creating transactions");
                     return $"error occured when creating transaction to add to db: {string.Join('\n', errors)}";
                 }
 
@@ -286,48 +298,5 @@ namespace GoCardlessToYnabSync.Services
             return lastRequisition;
         }
 
-        private void SendAuthMail(string authLink, string bankId)
-        {
-            var smptOptions = new SmptOptions();
-            _configuration.GetSection(SmptOptions.Smpt).Bind(smptOptions);
-
-            MailMessage mailMessage = new MailMessage();
-            mailMessage.From = new MailAddress(smptOptions.Email);
-            mailMessage.To.Add(smptOptions.SendTo);
-            mailMessage.Subject = $"New requisition Id to authenticate for bank {bankId}";
-            mailMessage.Body = $"Hello {smptOptions.Email}, \n\n You're old requisition Id was invalid, use the link below to authenticate the new one:\n {authLink}";
-
-
-            SmtpClient smtpClient = new SmtpClient();
-            smtpClient.Host = smptOptions.Host;
-            smtpClient.Port = smptOptions.Port;
-            smtpClient.UseDefaultCredentials = false;
-            smtpClient.Credentials = new NetworkCredential(smptOptions.Email, smptOptions.Password);
-            smtpClient.EnableSsl = true;
-
-            smtpClient.Send(mailMessage);
-        }
-      
-        private void SendFailedNewRequisitionMail(string exceptionMessage, string message)
-        {
-            var smptOptions = new SmptOptions();
-            _configuration.GetSection(SmptOptions.Smpt).Bind(smptOptions);
-
-            MailMessage mailMessage = new MailMessage();
-            mailMessage.From = new MailAddress(smptOptions.Email);
-            mailMessage.To.Add(smptOptions.SendTo);
-            mailMessage.Subject = $"Error occured in GoCardless to Ynab sync";
-            mailMessage.Body = $"Hello {smptOptions.Email}, \n\n {message}: {exceptionMessage}";
-
-
-            SmtpClient smtpClient = new SmtpClient();
-            smtpClient.Host = smptOptions.Host;
-            smtpClient.Port = smptOptions.Port;
-            smtpClient.UseDefaultCredentials = false;
-            smtpClient.Credentials = new NetworkCredential(smptOptions.Email, smptOptions.Password);
-            smtpClient.EnableSsl = true;
-
-            smtpClient.Send(mailMessage);
-        }
     }
 }
