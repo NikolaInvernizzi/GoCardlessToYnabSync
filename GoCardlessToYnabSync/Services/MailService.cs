@@ -14,7 +14,7 @@ namespace GoCardlessToYnabSync.Services
     {
         private readonly IConfiguration _configuration;
 
-        public MailService(IConfiguration configuration,)
+        public MailService(IConfiguration configuration)
         {
             _configuration = configuration;
         }
@@ -49,7 +49,7 @@ namespace GoCardlessToYnabSync.Services
             MailMessage mailMessage = new MailMessage();
             mailMessage.From = new MailAddress(smptOptions.Email);
             mailMessage.To.Add(smptOptions.SendTo);
-            mailMessage.Subject = $"GoCardlessToYnabSync: {subject})";
+            mailMessage.Subject = $"GoCardlessToYnabSync: {subject}";
             mailMessage.Body = $"Hello {smptOptions.Email}, \n\n {subject}: {fullMessage}";
 
             SmtpClient smtpClient = new SmtpClient();

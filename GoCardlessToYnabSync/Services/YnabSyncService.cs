@@ -98,6 +98,11 @@ namespace GoCardlessToYnabSync.Services
                 if (stringArray.Count >= 2)
                     return stringArray.ElementAt(2 - 1);
             }
+            else if(firstPart.Equals("BETALING AAN BANK CARD COMPANY", StringComparison.InvariantCultureIgnoreCase))
+            {
+                if (stringArray.Count >= 2)
+                    return stringArray.ElementAt(2 - 1);
+            }
             else
             {
                 if (stringArray.Count >= 3)

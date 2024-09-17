@@ -38,11 +38,6 @@ namespace GoCardlessToYnabSync.Functions
             var ynabSyncResultContent = await ynabClientResult.Content.ReadAsStringAsync();
             ynabClient.Dispose();
 
-            if (int.TryParse(ynabSyncResultContent, out var count) && count > 0)
-            {
-                _mailService.SendMail($"{count} items have been synced to ynab and need to be categorized.", $"{count} items synced to ynab");
-            }
-
             return new OkObjectResult($"GoCardlessSync result: \t{goCardlessSyncResult}\nYnabSync result: \t\t{ynabSyncResultContent}");
         }
     }
