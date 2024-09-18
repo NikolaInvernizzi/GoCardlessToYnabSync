@@ -28,7 +28,16 @@ namespace GoCardlessToYnabSync.Functions
         {
             _logger.LogInformation("GoCardlessSync HTTP function triggered");
 
-            var goCardlessSyncResult = await _goCardlessSyncService.PullTransactionsFromGoCardless();
+            string goCardlessResult;
+            try
+            {
+                var goCardlessSyncResult = await _goCardlessSyncService.RetrieveFromGoCardless();
+                goCardlessResult = $"GoCardlessSync result:\t{goCardlessSyncResult} items retrieved from GoCardless";
+            }
+            catch (Exception ex)
+            {
+                goCardlessResult = $"GoCardlessSync result:\t{ex.Message}";
+            }
 
             var functionUris = new FunctionUriOptions();
             _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
@@ -38,7 +47,7 @@ namespace GoCardlessToYnabSync.Functions
             var ynabSyncResultContent = await ynabClientResult.Content.ReadAsStringAsync();
             ynabClient.Dispose();
 
-            return new OkObjectResult($"GoCardlessSync result: \t{goCardlessSyncResult}\nYnabSync result: \t\t{ynabSyncResultContent}");
+            return new OkObjectResult($"{goCardlessResult}\n{ynabSyncResultContent}");
         }
     }
 }

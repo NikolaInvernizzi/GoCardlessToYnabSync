@@ -12,11 +12,10 @@ namespace GoCardlessToYnabSync.Functions
         private readonly YnabSyncService _ynabSyncService;
         private readonly MailService _mailService;
 
-        public YnabSync(ILogger<YnabSync> logger, YnabSyncService ynabSyncService, MailService mailService)
+        public YnabSync(ILogger<YnabSync> logger, YnabSyncService ynabSyncService)
         {
             _logger = logger;
             _ynabSyncService = ynabSyncService;
-            _mailService = mailService;
         }
 
         [Function("YnabSync")]
@@ -24,14 +23,15 @@ namespace GoCardlessToYnabSync.Functions
         {
             _logger.LogInformation("YnabSync HTTP function triggered");
 
-            var ynabSyncResult = await _ynabSyncService.PushTransactionsToYnab();
-
-            if (int.TryParse(ynabSyncResult, out var count) && count > 0)
+            try
             {
-                _mailService.SendMail($"{count} items have been synced to ynab and need to be categorized.", $"{count} items synced to ynab");
+                var ynabSyncResult = await _ynabSyncService.SyncToYnab();
+                return new OkObjectResult($"Result from pushing:\t{ynabSyncResult} items pushed to Ynab");
             }
-
-            return new OkObjectResult($"Result from pushing: {ynabSyncResult}");
+            catch (Exception ex)
+            {
+                return new OkObjectResult($"Result from pushing:\t{ex.Message}");
+            }
         }
     }
 }
