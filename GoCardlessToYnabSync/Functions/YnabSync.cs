@@ -10,7 +10,6 @@ namespace GoCardlessToYnabSync.Functions
     {
         private readonly ILogger<YnabSync> _logger;
         private readonly YnabSyncService _ynabSyncService;
-        private readonly MailService _mailService;
 
         public YnabSync(ILogger<YnabSync> logger, YnabSyncService ynabSyncService)
         {
@@ -26,11 +25,11 @@ namespace GoCardlessToYnabSync.Functions
             try
             {
                 var ynabSyncResult = await _ynabSyncService.SyncToYnab();
-                return new OkObjectResult($"Result from pushing:\t{ynabSyncResult} items pushed to Ynab");
+                return new OkObjectResult($"YnabSync result:\t{ynabSyncResult} items pushed to Ynab");
             }
             catch (Exception ex)
             {
-                return new OkObjectResult($"Result from pushing:\t{ex.Message}");
+                return new OkObjectResult($"YnabSync result:\t{ex.Message}");
             }
         }
     }

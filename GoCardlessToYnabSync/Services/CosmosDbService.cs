@@ -114,7 +114,7 @@ namespace GoCardlessToYnabSync.Services
             var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
 
             using FeedIterator<Requisition> feed = container.GetItemQueryIterator<Requisition>(
-                queryText: "SELECT top 1 * FROM Requisition r WHERE r.valid ORDER BY r.CreatedOn DESC"
+                queryText: "SELECT top 1 * FROM Requisition r WHERE r.valid or IS_NULL(r.valid) ORDER BY r.CreatedOn DESC"
             );
 
             Requisition? lastRequisition = null;

@@ -22,6 +22,6 @@ namespace GoCardlessToYnabSync.Models
         public DateTime? LastSyncOn { get; set; }
 
         [JsonProperty(PropertyName = "valid")]
-        public bool Valid { get; set; }
+        public bool? Valid { get; set; }
     }
 }

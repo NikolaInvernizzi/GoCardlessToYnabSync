@@ -24,74 +24,66 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<int> RetrieveFromGoCardless()
         {
-            try
+            var goCardlessOptions = new GoCardlessOptions();
+            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
+
+            var requisition = await GetLastRequisitionId();
+
+            if (requisition is null)
             {
-                var goCardlessOptions = new GoCardlessOptions();
-                _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-                var requisition = await GetLastRequisitionId();
-                
-                if (requisition is null)
-                {
-                    try
-                    {
-                        var newReq = await GetNewRequisitionId();
-
-                        await CreateNewRequisitionId(goCardlessOptions, newReq);
-                        throw new Exception("Authmail sent");
-                    }
-                    catch (Exception ex)
-                    {
-                        _mailService.SendMail(ex.Message, "Failed to retrieve new requisition id from GoCardless");
-                        throw;
-                    }
-                }
-                else
-                {
-                    (RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus? Status, RobinTTY.NordigenApiClient.Models.Responses.Requisition? Requisition) resultStatus;
-                    try
-                    {
-                        resultStatus = await GetStatusFromRequisition(requisition);
-                    }
-                    catch (Exception ex)
-                    {
-                        _mailService.SendMail(ex.Message, "Failed to retrieve status for requisition id from GoCardless");
-                        throw;
-                    }
-
-                    return await ExecuteActionBasedOnStatus(goCardlessOptions, requisition, resultStatus);  
-                }
+                await CreateNewRequisitionId(goCardlessOptions);
+                throw new Exception("Authentication (1) mail sent");
             }
-            catch (Exception ex)
+            else
             {
-                throw;
+                return await ExecuteActionBasedOnStatus(goCardlessOptions, requisition);
             }
         }
 
-        private async Task<int> ExecuteActionBasedOnStatus(GoCardlessOptions goCardlessOptions, Requisition requisition, (RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus? Status, RobinTTY.NordigenApiClient.Models.Responses.Requisition? Requisition) resultStatus)
+        private async Task<int> ExecuteActionBasedOnStatus(GoCardlessOptions goCardlessOptions, Requisition requisition)
         {
+            var resultStatus = await GetStatusFromRequisition(requisition);
+
             if (resultStatus.Status is null || resultStatus.Requisition is null)
             {
-                _mailService.SendMail("Could not retrieve requisition id", "Failed to retrieve requisition id from GoCardless");
+                _mailService.SendMail("Could not retrieve requisition id or status", "Failed to retrieve requisition id or status from GoCardless");
                 throw new Exception("cant get status  or requisition id from gocardless");
             }
-            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Expired)
+            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Expired
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Suspended
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Rejected)
             {
                 requisition.Valid = false;
                 await _cosmosDbService.UpdateRequistion(requisition);
-                _mailService.SendMail("Requisition id expired", "Retrieved requisition id from GoCardless is expired");
 
-                return await RetrieveFromGoCardless();
+                // double check
+                var lastReq = await GetLastRequisitionId();
+                if (lastReq is null)
+                {
+                    await CreateNewRequisitionId(goCardlessOptions);
+                    throw new Exception($"Requistion id was expired, new requistion id requested, authentication link should be sent");
+                }
+                else
+                {
+                    return await RetrieveFromGoCardless();
+                }
             }
-            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.UndergoingAuthentication)
+            else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.UndergoingAuthentication
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Created
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.GivingConsent
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.SelectingAccounts
+                || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.GrantingAccess)
             {
-                _mailService.SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink!!", goCardlessOptions.BankId);
-                throw new Exception("Resent authmail, last requisition id was not authenticated with bank yet!");
+                _mailService.SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink!!", goCardlessOptions.BankId, true);
+                throw new Exception("Resent authentication mail, last requisition id was not authenticated with bank yet!");
             }
             else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Linked)
             {
-                requisition.Valid = true;
-                requisition = await _cosmosDbService.UpdateRequistion(requisition);
+                if (!requisition.Valid.HasValue)
+                {
+                    requisition.Valid = true;
+                    requisition = await _cosmosDbService.UpdateRequistion(requisition);
+                }
 
                 var accountId = await GetAccountId(requisition);
 
@@ -107,15 +99,19 @@ namespace GoCardlessToYnabSync.Services
             }
             else
             {
-                _mailService.SendMail(resultStatus.Status?.ToString() ?? "STATUS FAILED", "Failed to retrieve requisition id from GoCardless");
-                requisition.Valid = false;
-                await _cosmosDbService.UpdateRequistion(requisition);
-                return await RetrieveFromGoCardless();
+                var msg = $"Unknown status: {resultStatus.Status.ToString()}, expand code to handle this status.";
+                _mailService.SendMail($"Unknown status: {resultStatus.Status.ToString()}", msg);
+                //requisition.Valid = false;
+                //await _cosmosDbService.UpdateRequistion(requisition);
+                //return await RetrieveFromGoCardless();
+                throw new Exception(msg);
             }
         }
 
-        private async Task CreateNewRequisitionId(GoCardlessOptions goCardlessOptions, (string? RequisitionId, string? AuthLink) newReq)
+        private async Task CreateNewRequisitionId(GoCardlessOptions goCardlessOptions)
         {
+            var newReq = await GetNewRequisitionId();
+
             if (newReq.RequisitionId is null || newReq.AuthLink is null)
             {
                 throw new Exception($"RequisitionId or AuthLink is null:  '{newReq.RequisitionId}' or '{newReq.AuthLink}'");
@@ -124,7 +120,7 @@ namespace GoCardlessToYnabSync.Services
             var newRequisition = new Requisition
             {
                 RequisitionId = newReq.RequisitionId,
-                Valid = false,
+                Valid = null,
                 LastSyncOn = null,
                 CreatedOn = DateTime.UtcNow,
             };
@@ -263,47 +259,62 @@ namespace GoCardlessToYnabSync.Services
             {
                 return accountsResponse.Result.Accounts.First().ToString();
             }
-            return null;
+            throw new Exception("Failed to retrieve accounts");
         }
 
         private async Task<(RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus? Status, RobinTTY.NordigenApiClient.Models.Responses.Requisition? Requisition)> GetStatusFromRequisition(Requisition requisition)
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
+            try
+            {
+                var goCardlessOptions = new GoCardlessOptions();
+                _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
 
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
+                var functionUris = new FunctionUriOptions();
+                _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
 
-            using var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-            var client = new NordigenClient(httpClient, credentials);
+                using var httpClient = new HttpClient();
+                var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
+                var client = new NordigenClient(httpClient, credentials);
 
-            var reqResult = await client.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
+                var reqResult = await client.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
 
-            return (reqResult.Result?.Status, reqResult.Result);
+                return (reqResult.Result?.Status, reqResult.Result);
+            }
+            catch (Exception ex)
+            {
+                _mailService.SendMail(ex.Message, "Failed to retrieve status for requisition id from GoCardless");
+                throw;
+            }
         }
 
 
         private async Task<(string? RequisitionId, string? AuthLink)> GetNewRequisitionId()
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
+            try {
+                var goCardlessOptions = new GoCardlessOptions();
+                _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
 
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
+                var functionUris = new FunctionUriOptions();
+                _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
 
-            using var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-            var client = new NordigenClient(httpClient, credentials);
+                using var httpClient = new HttpClient();
+                var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
+                var client = new NordigenClient(httpClient, credentials);
 
-            var requisitionResponse = await client.RequisitionsEndpoint.CreateRequisition(goCardlessOptions.BankId, new Uri(functionUris.GoCardlessSync));
+                var requisitionResponse = await client.RequisitionsEndpoint.CreateRequisition(goCardlessOptions.BankId, new Uri(functionUris.GoCardlessSync));
 
-            if (requisitionResponse.IsSuccess)
-            {
-                return (requisitionResponse.Result.Id.ToString(), requisitionResponse.Result.AuthenticationLink.ToString());
+                if (requisitionResponse.IsSuccess)
+                {
+                    return (requisitionResponse.Result.Id.ToString(), requisitionResponse.Result.AuthenticationLink.ToString());
+                }
+
+                return (null, null);
             }
-
-            return (null, null);
+            catch (Exception ex)
+            {
+                _mailService.SendMail(ex.Message, "Failed to retrieve new requisition id from GoCardless");
+                throw;
+            }
         }
 
         private async Task<Requisition?> GetLastRequisitionId()

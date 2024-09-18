@@ -19,7 +19,7 @@ namespace GoCardlessToYnabSync.Services
             _configuration = configuration;
         }
 
-        public void SendAuthMail(string authLink, string bankId)
+        public void SendAuthMail(string authLink, string bankId, bool resend = false)
         {
             var smptOptions = new SmptOptions();
             _configuration.GetSection(SmptOptions.Smpt).Bind(smptOptions);
@@ -27,9 +27,17 @@ namespace GoCardlessToYnabSync.Services
             MailMessage mailMessage = new MailMessage();
             mailMessage.From = new MailAddress(smptOptions.Email);
             mailMessage.To.Add(smptOptions.SendTo);
-            mailMessage.Subject = $"GoCardlessToYnabSync: Authetnicate the new requisition Id for bank {bankId}";
-            mailMessage.Body = $"Hello {smptOptions.Email}, \n\n You're old requisition Id was invalid, use the link below to authenticate the new one:\n {authLink}";
 
+            if (!resend)
+            {
+                mailMessage.Subject = $"GoCardlessToYnabSync: Authenticate the new requisition Id for {bankId}";
+                mailMessage.Body = $"Hello {smptOptions.Email}, \n\n You're old requisition Id was invalid, use the link below to authenticate the new one:\n {authLink}. \n\n If the Requistion ID is not authenticated before next Sync you will receive a reminder mail to authenticate.";
+            }
+            else
+            {
+                mailMessage.Subject = $"GoCardlessToYnabSync: your Requistion ID is still undergoing authentication for {bankId}";
+                mailMessage.Body = $"Hello {smptOptions.Email}, \n\n Your Requistion ID has not been authenticated yet for the bank {bankId}, use the link below to authenticate the new one:\n {authLink}\n\n You will receive this mail everytime the Sync is executed and the Requistion ID has not been authenticated.";
+            }
 
             SmtpClient smtpClient = new SmtpClient();
             smtpClient.Host = smptOptions.Host;

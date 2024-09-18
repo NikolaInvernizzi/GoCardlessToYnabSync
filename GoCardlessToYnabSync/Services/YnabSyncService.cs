@@ -1,5 +1,6 @@
 ﻿using GoCardlessToYnabSync.Models;
 using GoCardlessToYnabSync.Options;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow;
 using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using System;
@@ -28,24 +29,16 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<int> SyncToYnab()
         {
-            try
+            var transactions = await GetTransactions();
+            if(transactions.Count == 0)
             {
-                var transactions = await GetTransactions();
-                if(transactions.Count == 0)
-                {
-                    throw new Exception("Nothing to sync");
-                }
+                throw new Exception("Nothing to sync");
+            }
 
-                var result = await PushTransactionsToYnab(transactions);
-                _mailService.SendMail($"{result} items have been synced to Ynab and need to be categorized.", $"{result} items synced to Ynab");
+            var result = await PushTransactionsToYnab(transactions);
+            _mailService.SendMail($"{result} items have been synced to Ynab and need to be categorized.", $"{result} items synced to Ynab");
                 
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _mailService.SendMail(ex.Message, " FAIL - Error throw in PullTransactionsFromGoCardless");
-                throw;
-            }
+            return result;            
         }
 
         public async Task<int> PushTransactionsToYnab(List<Transaction> transactions)
@@ -64,6 +57,7 @@ namespace GoCardlessToYnabSync.Services
             var accountId = accounts.Data.Accounts.FirstOrDefault(a => a.Name.Equals(ynabOptions.AccountName, StringComparison.InvariantCultureIgnoreCase))?.Id;
             if (!accountId.HasValue || accountId.Value.ToString().Equals(new Guid().ToString()))
             {
+                _mailService.SendMail($"AccountId not found in Ynab for BudgetId {ynabOptions.BudgetId} and accountname {ynabOptions.AccountName}", $"Ynab AccountId not found for Given Budget");
                 throw new Exception($"AccountId not found in Ynab for BudgetId {ynabOptions.BudgetId} and accountname {ynabOptions.AccountName}");
             }
 
@@ -77,7 +71,10 @@ namespace GoCardlessToYnabSync.Services
             });
 
             if (createdTransResponse.Data?.Transactions is null)
+            {
+                _mailService.SendMail($"No transactions returned from Ynab.\n You may want to look into this!", $"No transactions returned from Ynab, hmmm?");
                 throw new Exception("No transactions returned from Ynab, hmmm?");
+            }
 
             var now = DateTime.Now;
             foreach (var item in createdTransResponse.Data.Transactions)
