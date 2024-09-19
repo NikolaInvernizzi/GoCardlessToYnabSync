@@ -134,6 +134,31 @@ namespace GoCardlessToYnabSync.Services
             return lastRequisition;
         }
 
+        public async Task<List<Requisition>> GetAllRequistionIds()
+        {
+            var cosmosDbOptions = new CosmosDbOptions();
+            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
+
+            var client = await GetCosmosClient(cosmosDbOptions);
+            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
+
+            using FeedIterator<Requisition> feed = container.GetItemQueryIterator<Requisition>(
+                queryText: "SELECT top 1 * FROM Requisition r ORDER BY r.CreatedOn DESC"
+            );
+
+            var reqIds = new List<Requisition>();
+            while (feed.HasMoreResults)
+            {
+                FeedResponse<Requisition> response = await feed.ReadNextAsync();
+
+                foreach (Requisition item in response)
+                {
+                    reqIds.Add(item);
+                }
+            }
+            return reqIds;
+        }
+
         private async Task<CosmosClient> GetCosmosClient(CosmosDbOptions cosmosDbOptions)
         {
             var client = new CosmosClient(cosmosDbOptions.ConnectionString);

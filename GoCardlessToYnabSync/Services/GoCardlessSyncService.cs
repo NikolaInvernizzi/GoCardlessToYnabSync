@@ -322,5 +322,54 @@ namespace GoCardlessToYnabSync.Services
             var lastRequisition = await _cosmosDbService.GetLastRequisitionId();
             return lastRequisition;
         }
+
+
+        public async Task<string> PurgeGoCardlessRequisitionIds()
+        {
+            var goCardlessOptions = new GoCardlessOptions();
+            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
+
+            using var httpClient = new HttpClient();
+            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
+            var client = new NordigenClient(httpClient, credentials);
+
+            var allRequistionsIdsGoCardlessResponse = await client.RequisitionsEndpoint.GetRequisitions(100, 0);
+
+            if (!allRequistionsIdsGoCardlessResponse.IsSuccess)
+            {
+                throw new Exception("Failed to retrieve requisition ids from GoCardless");
+            }
+
+            var allRequistionsIdsDB = await _cosmosDbService.GetAllRequistionIds();
+
+            var allRequistionIdsDbNotValid = allRequistionsIdsDB.Where(r => !r.Valid.HasValue || r.Valid.Value).Select(r => r.RequisitionId);
+
+            var requisitionIdsToDelete = allRequistionsIdsGoCardlessResponse.Result.Results.Where(r => !allRequistionIdsDbNotValid.Contains(r.Id.ToString()));
+
+            var count = 0;
+            var failedPurges = new List<string>();
+            foreach (var item in requisitionIdsToDelete)
+            {
+                var deleteRequistionIdResponse = await client.RequisitionsEndpoint.DeleteRequisition(item.Id);
+                if (deleteRequistionIdResponse.IsSuccess)
+                {
+                    count++;
+                    var result = deleteRequistionIdResponse.Result;
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(deleteRequistionIdResponse.Result?.Detail))
+                        failedPurges.Add(deleteRequistionIdResponse.Result.Detail);
+                    else
+                        failedPurges.Add($"Failed to purge {item.Id}");
+                }
+            }
+            if (failedPurges.Count > 0)
+            {
+                return $"\n\tSuccesfully purged {count} requistion Ids from GoCardless\n\tBut failed to purge the following: {string.Join("\n\t\t- ", failedPurges)}";
+            }
+
+            return $"Succesfully purged {count} requistion Ids from GoCardless";
+        }
     }
 }
