@@ -5,20 +5,25 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GoCardlessToYnabSync.Functions
 {
     public class GoCardlessSync
     {
         private readonly ILogger<GoCardlessSync> _logger;
-        private readonly IConfiguration _configuration;
+        private readonly FunctionUriOptions _functionUriOptions;
         private readonly GoCardlessSyncService _goCardlessSyncService;
         private readonly MailService _mailService;
 
-        public GoCardlessSync(ILogger<GoCardlessSync> logger, IConfiguration configuration, GoCardlessSyncService goCardlessSyncService, MailService mailService)
+        public GoCardlessSync(
+            ILogger<GoCardlessSync> logger,
+            IOptions<FunctionUriOptions> functionUriOptions,
+            GoCardlessSyncService goCardlessSyncService, 
+            MailService mailService)
         {
             _logger = logger;
-            _configuration = configuration;
+            _functionUriOptions = functionUriOptions.Value;
             _goCardlessSyncService = goCardlessSyncService;
             _mailService = mailService;
         }
@@ -39,11 +44,8 @@ namespace GoCardlessToYnabSync.Functions
                 goCardlessResult = $"GoCardlessSync result:\t{ex.Message}";
             }
 
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
             var ynabClient = new HttpClient();
-            var ynabClientResult = await ynabClient.GetAsync(functionUris.YnabSync);
+            var ynabClientResult = await ynabClient.GetAsync(_functionUriOptions.YnabSync);
             var ynabSyncResultContent = await ynabClientResult.Content.ReadAsStringAsync();
             ynabClient.Dispose();
 

@@ -12,6 +12,8 @@ namespace GoCardlessToYnabSync.Options
         public string ConnectionString { get; set; } = String.Empty;
         public string Database { get; set; } = String.Empty;
         public string ContainerTransactions { get; set; } = String.Empty;
+        public string ContainerTransactionsPartitionKey { get; set; } = String.Empty;
         public string ContainerRequisitions { get; set; } = String.Empty;
+        public string ContainerRequisitionsPartitionKey { get; set; } = String.Empty;
     }
 }

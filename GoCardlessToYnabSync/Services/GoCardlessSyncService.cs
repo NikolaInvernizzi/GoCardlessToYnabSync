@@ -6,41 +6,51 @@ using RobinTTY.NordigenApiClient.Models;
 using RobinTTY.NordigenApiClient;
 using GoCardlessToYnabSync.Options;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Options;
+using System.Net.Http;
 
 namespace GoCardlessToYnabSync.Services
 {
     public class GoCardlessSyncService
     {
-        private readonly IConfiguration _configuration;
         private readonly CosmosDbService _cosmosDbService;
         private readonly MailService _mailService;
+        private readonly GoCardlessOptions _goCardlessOptions;
+        private readonly FunctionUriOptions _functionUriOptions;
+        private readonly NordigenClient _nordigenClient;
 
-        public GoCardlessSyncService(IConfiguration configuration, CosmosDbService cosmosDbService, MailService mailService) 
+        public GoCardlessSyncService(
+            CosmosDbService cosmosDbService, 
+            MailService mailService,
+            IOptions<FunctionUriOptions> functionUriOptions,
+            IOptions<GoCardlessOptions> goCardlessOptions) 
         {
-            _configuration = configuration;
             _cosmosDbService = cosmosDbService;
             _mailService = mailService;
+            _functionUriOptions = functionUriOptions.Value;
+            _goCardlessOptions = goCardlessOptions.Value;
+
+            var httpClient = new HttpClient();
+            var credentials = new NordigenClientCredentials(_goCardlessOptions.SecretId, _goCardlessOptions.Secret);
+            _nordigenClient = new NordigenClient(httpClient, credentials);
         }
 
         public async Task<int> RetrieveFromGoCardless()
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
             var requisition = await GetLastRequisitionId();
 
             if (requisition is null)
             {
-                await CreateNewRequisitionId(goCardlessOptions);
+                await CreateNewRequisitionId();
                 throw new Exception("Authentication (1) mail sent");
             }
             else
             {
-                return await ExecuteActionBasedOnStatus(goCardlessOptions, requisition);
+                return await ExecuteActionBasedOnStatus(requisition);
             }
         }
 
-        private async Task<int> ExecuteActionBasedOnStatus(GoCardlessOptions goCardlessOptions, Requisition requisition)
+        private async Task<int> ExecuteActionBasedOnStatus(Requisition requisition)
         {
             var resultStatus = await GetStatusFromRequisition(requisition);
 
@@ -60,7 +70,7 @@ namespace GoCardlessToYnabSync.Services
                 var lastReq = await GetLastRequisitionId();
                 if (lastReq is null)
                 {
-                    await CreateNewRequisitionId(goCardlessOptions);
+                    await CreateNewRequisitionId();
                     throw new Exception($"Requistion id was expired, new requistion id requested, authentication link should be sent");
                 }
                 else
@@ -74,7 +84,7 @@ namespace GoCardlessToYnabSync.Services
                 || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.SelectingAccounts
                 || resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.GrantingAccess)
             {
-                _mailService.SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink!!", goCardlessOptions.BankId, true);
+                _mailService.SendAuthMail(resultStatus.Requisition?.AuthenticationLink?.ToString() ?? "issue with authlink!!", true);
                 throw new Exception("Resent authentication mail, last requisition id was not authenticated with bank yet!");
             }
             else if (resultStatus.Status == RobinTTY.NordigenApiClient.Models.Responses.RequisitionStatus.Linked)
@@ -108,7 +118,7 @@ namespace GoCardlessToYnabSync.Services
             }
         }
 
-        private async Task CreateNewRequisitionId(GoCardlessOptions goCardlessOptions)
+        private async Task CreateNewRequisitionId()
         {
             var newReq = await GetNewRequisitionId();
 
@@ -126,23 +136,13 @@ namespace GoCardlessToYnabSync.Services
             };
             await _cosmosDbService.AddNewRequisition(newRequisition);
 
-            _mailService.SendAuthMail(newReq.AuthLink, goCardlessOptions.BankId);
+            _mailService.SendAuthMail(newReq.AuthLink);
         }
 
         private async Task<int> SyncTransaction(string accountId)
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
-            using var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-            var client = new NordigenClient(httpClient, credentials);
-
-            var transactionSince = DateTime.UtcNow.AddDays(-goCardlessOptions.DaysInPastToRetrieve);
-            var transactionsResponse = await client.AccountsEndpoint.GetTransactions(accountId, 
+            var transactionSince = DateTime.UtcNow.AddDays(_goCardlessOptions.DaysInPastToRetrieve * -1);
+            var transactionsResponse = await _nordigenClient.AccountsEndpoint.GetTransactions(accountId, 
                                                             DateOnly.FromDateTime(transactionSince));
             if (transactionsResponse.IsSuccess)
             {
@@ -244,17 +244,7 @@ namespace GoCardlessToYnabSync.Services
 
         private async Task<string?> GetAccountId(Requisition requisition)
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
-            using var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-            var client = new NordigenClient(httpClient, credentials);
-
-            var accountsResponse = await client.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
+            var accountsResponse = await _nordigenClient.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
             if (accountsResponse.IsSuccess)
             {
                 return accountsResponse.Result.Accounts.First().ToString();
@@ -266,17 +256,7 @@ namespace GoCardlessToYnabSync.Services
         {
             try
             {
-                var goCardlessOptions = new GoCardlessOptions();
-                _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-                var functionUris = new FunctionUriOptions();
-                _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
-                using var httpClient = new HttpClient();
-                var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-                var client = new NordigenClient(httpClient, credentials);
-
-                var reqResult = await client.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
+                var reqResult = await _nordigenClient.RequisitionsEndpoint.GetRequisition(requisition.RequisitionId);
 
                 return (reqResult.Result?.Status, reqResult.Result);
             }
@@ -291,17 +271,7 @@ namespace GoCardlessToYnabSync.Services
         private async Task<(string? RequisitionId, string? AuthLink)> GetNewRequisitionId()
         {
             try {
-                var goCardlessOptions = new GoCardlessOptions();
-                _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-                var functionUris = new FunctionUriOptions();
-                _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
-                using var httpClient = new HttpClient();
-                var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-                var client = new NordigenClient(httpClient, credentials);
-
-                var requisitionResponse = await client.RequisitionsEndpoint.CreateRequisition(goCardlessOptions.BankId, new Uri(functionUris.GoCardlessSync));
+                var requisitionResponse = await _nordigenClient.RequisitionsEndpoint.CreateRequisition(_goCardlessOptions.BankId, new Uri(_functionUriOptions.GoCardlessSync));
 
                 if (requisitionResponse.IsSuccess)
                 {
@@ -326,14 +296,7 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<string> PurgeGoCardlessRequisitionIds()
         {
-            var goCardlessOptions = new GoCardlessOptions();
-            _configuration.GetSection(GoCardlessOptions.GoCardless).Bind(goCardlessOptions);
-
-            using var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(goCardlessOptions.SecretId, goCardlessOptions.Secret);
-            var client = new NordigenClient(httpClient, credentials);
-
-            var allRequistionsIdsGoCardlessResponse = await client.RequisitionsEndpoint.GetRequisitions(100, 0);
+            var allRequistionsIdsGoCardlessResponse = await _nordigenClient.RequisitionsEndpoint.GetRequisitions(100, 0);
 
             if (!allRequistionsIdsGoCardlessResponse.IsSuccess)
             {
@@ -350,7 +313,7 @@ namespace GoCardlessToYnabSync.Services
             var failedPurges = new List<string>();
             foreach (var item in requisitionIdsToDelete)
             {
-                var deleteRequistionIdResponse = await client.RequisitionsEndpoint.DeleteRequisition(item.Id);
+                var deleteRequistionIdResponse = await _nordigenClient.RequisitionsEndpoint.DeleteRequisition(item.Id);
                 if (deleteRequistionIdResponse.IsSuccess)
                 {
                     count++;

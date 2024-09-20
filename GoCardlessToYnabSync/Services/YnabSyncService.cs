@@ -2,10 +2,12 @@
 using GoCardlessToYnabSync.Options;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,17 +17,28 @@ namespace GoCardlessToYnabSync.Services
 {
     public class YnabSyncService
     {
-        private readonly IConfiguration _configuration;
         private readonly MailService _mailService;
         private readonly CosmosDbService _cosmosDbService;
+        private readonly YnabOptions _ynabOptions;
+        private readonly YnabApiClient _ynabApiClient;
 
-        public YnabSyncService(IConfiguration configuration, MailService mailService, CosmosDbService cosmosDbService)
+        public YnabSyncService(
+            MailService mailService, 
+            CosmosDbService cosmosDbService,
+            IOptions<YnabOptions> ynabOptions
+            )
         {
             _mailService = mailService;
-            _configuration = configuration;
             _cosmosDbService = cosmosDbService;
-        }
+            _ynabOptions = ynabOptions.Value;
 
+            _ynabApiClient = new YnabApiClient(new HttpClient()
+            {
+                DefaultRequestHeaders = {
+                    Authorization = new AuthenticationHeaderValue("Bearer", _ynabOptions.Secret)
+                }
+            });
+        }
 
         public async Task<int> SyncToYnab()
         {
@@ -43,29 +56,19 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<int> PushTransactionsToYnab(List<Transaction> transactions)
         {
-            var ynabOptions = new YnabOptions();
-            _configuration.GetSection(YnabOptions.Ynab).Bind(ynabOptions);
-
-            var ynabClient = new YnabApiClient(new HttpClient()
-            {
-                DefaultRequestHeaders = {
-                    Authorization = new AuthenticationHeaderValue("Bearer", ynabOptions.Secret)
-                }
-            });
-
-            var accounts = ynabClient.GetAccountsAsync(ynabOptions.BudgetId, null).Result;
-            var accountId = accounts.Data.Accounts.FirstOrDefault(a => a.Name.Equals(ynabOptions.AccountName, StringComparison.InvariantCultureIgnoreCase))?.Id;
+            var accounts = _ynabApiClient.GetAccountsAsync(_ynabOptions.BudgetId, null).Result;
+            var accountId = accounts.Data.Accounts.FirstOrDefault(a => a.Name.Equals(_ynabOptions.AccountName, StringComparison.InvariantCultureIgnoreCase))?.Id;
             if (!accountId.HasValue || accountId.Value.ToString().Equals(new Guid().ToString()))
             {
-                _mailService.SendMail($"AccountId not found in Ynab for BudgetId {ynabOptions.BudgetId} and accountname {ynabOptions.AccountName}", $"Ynab AccountId not found for Given Budget");
-                throw new Exception($"AccountId not found in Ynab for BudgetId {ynabOptions.BudgetId} and accountname {ynabOptions.AccountName}");
+                _mailService.SendMail($"AccountId not found in Ynab for BudgetId {_ynabOptions.BudgetId} and accountname {_ynabOptions.AccountName}", $"Ynab AccountId not found for Given Budget");
+                throw new Exception($"AccountId not found in Ynab for BudgetId {_ynabOptions.BudgetId} and accountname {_ynabOptions.AccountName}");
             }
 
             var saveTransactions = BuildTransactions(transactions, accountId.Value);
             if (saveTransactions.Count == 0)
                 throw new Exception("Nothing to sync to Ynab");
 
-            var createdTransResponse = await ynabClient.CreateTransactionAsync(ynabOptions.BudgetId, new PostTransactionsWrapper
+            var createdTransResponse = await _ynabApiClient.CreateTransactionAsync(_ynabOptions.BudgetId, new PostTransactionsWrapper
             {
                 Transactions = saveTransactions
             });

@@ -3,18 +3,21 @@ using GoCardlessToYnabSync.Options;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace GoCardlessToYnabSync.Functions
 {
     public class GoCardlessToYnabTimer
     {
         private readonly ILogger _logger;
-        private readonly IConfiguration _configuration;
+        private readonly FunctionUriOptions _functionUriOptions;
 
-        public GoCardlessToYnabTimer(ILoggerFactory loggerFactory, IConfiguration configuration)
+        public GoCardlessToYnabTimer(
+            ILoggerFactory loggerFactory, 
+            IOptions<FunctionUriOptions> functionUriOptions)
         {
             _logger = loggerFactory.CreateLogger<GoCardlessToYnabTimer>();
-            _configuration = configuration;
+            _functionUriOptions = functionUriOptions.Value;
         }
 
         // https://crontab.guru/
@@ -26,11 +29,8 @@ namespace GoCardlessToYnabSync.Functions
         {
             _logger.LogInformation($"Starting up GoCardLessSync with timer function: {DateTime.Now}");
 
-            var functionUris = new FunctionUriOptions();
-            _configuration.GetSection(FunctionUriOptions.FunctionUris).Bind(functionUris);
-
             var client = new HttpClient();
-            await client.GetAsync(functionUris.GoCardlessSync);
+            await client.GetAsync(_functionUriOptions.GoCardlessSync);
             client.Dispose();
 
             if (myTimer.ScheduleStatus is not null)

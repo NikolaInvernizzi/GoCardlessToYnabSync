@@ -11,14 +11,12 @@ namespace GoCardlessToYnabSync.Functions
     public class PurgeGoCardlessRequisitionIds
     {
         private readonly ILogger<GoCardlessSync> _logger;
-        private readonly IConfiguration _configuration;
         private readonly GoCardlessSyncService _goCardlessSyncService;
         private readonly MailService _mailService;
 
-        public PurgeGoCardlessRequisitionIds(ILogger<GoCardlessSync> logger, IConfiguration configuration, GoCardlessSyncService goCardlessSyncService, MailService mailService)
+        public PurgeGoCardlessRequisitionIds(ILogger<GoCardlessSync> logger, GoCardlessSyncService goCardlessSyncService, MailService mailService)
         {
             _logger = logger;
-            _configuration = configuration;
             _goCardlessSyncService = goCardlessSyncService;
             _mailService = mailService;
         }

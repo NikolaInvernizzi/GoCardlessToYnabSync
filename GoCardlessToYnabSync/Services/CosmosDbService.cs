@@ -2,25 +2,29 @@
 using GoCardlessToYnabSync.Options;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using System;
 
 namespace GoCardlessToYnabSync.Services
 {
     public class CosmosDbService
     {
-        private readonly IConfiguration _configuration;
-        public CosmosDbService(IConfiguration configuration) 
+        private readonly CosmosDbOptions _cosmosDbOptions;
+        private readonly CosmosClient _cosmosClient;
+
+        public CosmosDbService(IOptions<CosmosDbOptions> cosmosDbOptions) 
         {
-            _configuration = configuration;
+            _cosmosDbOptions = cosmosDbOptions.Value;
+
+            _cosmosClient = new CosmosClient(_cosmosDbOptions.ConnectionString);
+
+            if (_cosmosClient == null)
+                throw new ArgumentNullException(nameof(_cosmosClient));
         }
 
         public async Task<List<Transaction>> GetTransactionsNoSynced()
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerTransactions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerTransactions, _cosmosDbOptions.ContainerTransactionsPartitionKey);
 
             using FeedIterator<Transaction> feed = container.GetItemQueryIterator<Transaction>(
                 queryText: "SELECT * FROM Transactions t where t.syncedOn = null"
@@ -41,11 +45,7 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<List<Transaction>> GetTransactionsSince(DateTime dateTime)
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerTransactions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerTransactions, _cosmosDbOptions.ContainerTransactionsPartitionKey);
 
             var parameterizedQuery = new QueryDefinition(
                 query: "SELECT * FROM Transactions t where t.bookingDate >  @bookedAfter"
@@ -70,11 +70,7 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task AddOrUpdateTransactions(List<Transaction> transactions)
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerTransactions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerTransactions, _cosmosDbOptions.ContainerTransactionsPartitionKey);
 
             foreach (Transaction item in transactions)
             {
@@ -84,11 +80,7 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<Requisition> UpdateRequistion(Requisition requisition)
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerRequisitions, _cosmosDbOptions.ContainerRequisitionsPartitionKey);
 
             var resp = await container.UpsertItemAsync(requisition);
             return requisition;
@@ -96,22 +88,14 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task AddNewRequisition(Requisition requisition)
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerRequisitions, _cosmosDbOptions.ContainerRequisitionsPartitionKey);
 
             var resp = await container.CreateItemAsync(requisition);
         }
 
         public async Task<Requisition?> GetLastRequisitionId ()
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerRequisitions, _cosmosDbOptions.ContainerRequisitionsPartitionKey);
 
             using FeedIterator<Requisition> feed = container.GetItemQueryIterator<Requisition>(
                 queryText: "SELECT top 1 * FROM Requisition r WHERE r.valid or IS_NULL(r.valid) ORDER BY r.CreatedOn DESC"
@@ -136,11 +120,7 @@ namespace GoCardlessToYnabSync.Services
 
         public async Task<List<Requisition>> GetAllRequistionIds()
         {
-            var cosmosDbOptions = new CosmosDbOptions();
-            _configuration.GetSection(CosmosDbOptions.CosmosDb).Bind(cosmosDbOptions);
-
-            var client = await GetCosmosClient(cosmosDbOptions);
-            var container = client.GetContainer(cosmosDbOptions.Database, cosmosDbOptions.ContainerRequisitions);
+            var container = await GetContainerInitialized(_cosmosDbOptions.ContainerRequisitions, _cosmosDbOptions.ContainerRequisitionsPartitionKey);
 
             using FeedIterator<Requisition> feed = container.GetItemQueryIterator<Requisition>(
                 queryText: "SELECT top 1 * FROM Requisition r ORDER BY r.CreatedOn DESC"
@@ -159,22 +139,12 @@ namespace GoCardlessToYnabSync.Services
             return reqIds;
         }
 
-        private async Task<CosmosClient> GetCosmosClient(CosmosDbOptions cosmosDbOptions)
+        private async Task<Container> GetContainerInitialized(string containerId, string partionKey)
         {
-            var client = new CosmosClient(cosmosDbOptions.ConnectionString);
-
-            if (client == null)
-                throw new ArgumentNullException(nameof(client));
-            await InitCosmosDB(client, cosmosDbOptions);
-
-            return client;
-        }
-        private async Task InitCosmosDB(CosmosClient client, CosmosDbOptions cosmosDbOptions)
-        {
-            var respDatabse = await client.CreateDatabaseIfNotExistsAsync(cosmosDbOptions.Database, 400);
-            var database = client.GetDatabase(cosmosDbOptions.Database);
-            var respContainerT = await database.CreateContainerIfNotExistsAsync(cosmosDbOptions.ContainerTransactions, "/bookingDate");
-            var respContainerR = await database.CreateContainerIfNotExistsAsync(cosmosDbOptions.ContainerRequisitions, "/requisitionId");
+            var respDatabse = await _cosmosClient.CreateDatabaseIfNotExistsAsync(_cosmosDbOptions.Database, 400);
+            var database = _cosmosClient.GetDatabase(_cosmosDbOptions.Database);
+            var containerResp = await database.CreateContainerIfNotExistsAsync(containerId, partionKey);
+            return containerResp.Container;
         }
     }
 }
