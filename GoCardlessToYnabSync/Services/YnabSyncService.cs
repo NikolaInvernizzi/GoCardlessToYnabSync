@@ -123,67 +123,80 @@ namespace GoCardlessToYnabSync.Services
 
         public string GetPayee(string? text)
         {
+            // Return if string is empty
             if (string.IsNullOrWhiteSpace(text))
-                return "";
+                return string.Empty;
 
-            var indexNarrative = text.IndexOf("narrative:");
-            var narrative = text.Substring(indexNarrative);
+            // Find the index of the "narrative:" keyword in the text
+            int indexNarrative = text.IndexOf("narrative:");
+            if (indexNarrative == -1)
+                return string.Empty;
 
-            var indexArray = narrative.IndexOf("[");
-            var stringArrayStr = narrative.Substring(indexArray);
+            // Extract the narrative part of the string
+            string narrative = text.Substring(indexNarrative);
 
+            // Find the index of the starting bracket "[" within the narrative
+            int indexArray = narrative.IndexOf("[");
+            if (indexArray == -1)
+                return string.Empty;
+
+            // Extract the JSON array as a string
+            string stringArrayStr = narrative.Substring(indexArray);
+
+            // Deserialize the string to a List<string>
             var stringArray = JsonConvert.DeserializeObject<List<string>>(stringArrayStr);
 
-            if (stringArray is null || stringArray.Count < 3)
-                return "";
+            // Return empty if the array is null or contains less than 3 items
+            if (stringArray == null || stringArray.Count < 3)
+                return string.Empty;
 
-            var firstPart = stringArray.FirstOrDefault()?.Trim();
+            // Get the first item in the array, trim any leading/trailing spaces
+            string? firstPart = stringArray.FirstOrDefault()?.Trim();
             if (firstPart is null)
-                return "";
+                return string.Empty;
 
-            if (firstPart.Equals("EUROPESE DOMICILIERING VAN", StringComparison.InvariantCultureIgnoreCase))
+            // Create list of payee types
+            // Todo: move to appsettings
+            List<(string Name, int? Index1, int? Index2, string? FallBackString)> listPayeeTypes = new List<(string, int?, int?, string?)>
             {
-                if (stringArray.Count >= 8)
-                    return $"{stringArray.ElementAt(2 - 1)} - {stringArray.ElementAt(8 - 1)}";
+                ("EUROPESE DOMICILIERING VAN", 1, 7, null),
+                ("MAANDELIJKSE BIJDRAGE", 1, null, null),
+                ("OVERSCHRIJVING IN EURO VAN REKENING", 2, null, null),
+                ("OVERSCHRIJVING IN EURO OP REKENING", 3, null, null),
+                ("MOBIELE BETALING", null, null, "MOBIELE BETALING (P2P)"),
+                ("STORTING VAN", 1, null, null),
+                ("BETALING AAN BANK CARD COMPANY", 1, null, null),
+                ("TERUGBETALING WOONKREDIET", null, null, "TERUGBETALING WOONKREDIET")
+            };
+            
+            // Find payee type and extra payee from narrative string array
+            foreach ( var payeeType in listPayeeTypes)
+            {
+                if(firstPart.Equals(payeeType.Name, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    if (!payeeType.Index1.HasValue && !payeeType.Index2.HasValue && !string.IsNullOrWhiteSpace(payeeType.FallBackString))
+                        return payeeType.FallBackString;
 
-                if (stringArray.Count >= 2)
-                    return stringArray.ElementAt(2 - 1);
+                    var result  = GetStringFromArray(payeeType.Index1, payeeType.Index2, stringArray);
+                    if (!string.IsNullOrWhiteSpace(result))
+                        return result;
+                }
             }
-            else if (firstPart.Equals("MAANDELIJKSE BIJDRAGE", StringComparison.InvariantCultureIgnoreCase))
-            {
-                if (stringArray.Count >= 2)
-                    return stringArray.ElementAt(2 - 1);
-            }
-            else if (firstPart.Equals("OVERSCHRIJVING IN EURO VAN REKENING", StringComparison.InvariantCultureIgnoreCase))
-            {
-                if (stringArray.Count >= 3)
-                    return stringArray.ElementAt(3 - 1);
-            }
-            else if (firstPart.Equals("OVERSCHRIJVING IN EURO OP REKENING", StringComparison.InvariantCultureIgnoreCase))
-            {
-                if (stringArray.Count >= 4)
-                    return stringArray.ElementAt(4 - 1);
-            }
-            else if (firstPart.Equals("MOBIELE BETALING", StringComparison.InvariantCultureIgnoreCase))
-            {
-                return "MOBIELE BETALING (P2P)";
-            }
-            else if (firstPart.Equals("STORTING VAN", StringComparison.InvariantCultureIgnoreCase))
-            {
-                if (stringArray.Count >= 2)
-                    return stringArray.ElementAt(2 - 1);
-            }
-            else if (firstPart.Equals("BETALING AAN BANK CARD COMPANY", StringComparison.InvariantCultureIgnoreCase))
-            {
-                if (stringArray.Count >= 2)
-                    return stringArray.ElementAt(2 - 1);
-            }
-            else
-            {
-                if (stringArray.Count >= 3)
-                    return stringArray.ElementAt(3 - 1);
-            }
-            return "";
+
+            // final fallback
+            if (stringArray.Count >= 3)
+                return stringArray.ElementAt(3 - 1);
+
+            // Return empty string if fallback fails
+            return string.Empty;
         }
-    }
+
+        private string GetStringFromArray(int? index1, int? index2, List<string> strings)
+        {
+            var resultIndex1 = (index1.HasValue && strings.Count >= (index1.Value + 1)) ? strings.ElementAt(index1.Value) : null;
+            var resultIndex2 = (index2.HasValue && strings.Count >= (index2.Value + 1)) ? strings.ElementAt(index2.Value) : null;
+            var results = new[] { resultIndex1, resultIndex2 };
+            return string.Join(" - ", results.Where(r => !string.IsNullOrWhiteSpace(r)));
+        }
+    }   
 }
