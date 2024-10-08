@@ -193,7 +193,7 @@ namespace GoCardlessToYnabSync.Services
                         {
                             errors.Add($"{item.Key}: additional info (1) is empty");
                         }
-                        var additionalInformation = item.FirstOrDefault(x => x.AdditionalInformation!.Contains("statementReference"));
+                        var additionalInformation = item.FirstOrDefault(x => x.AdditionalInformation!.Contains("narrative:"));
                         if (additionalInformation is null || string.IsNullOrWhiteSpace(additionalInformation.AdditionalInformation))
                         {
                             // if no statementreference is available its because the transaction is not complete yet,
