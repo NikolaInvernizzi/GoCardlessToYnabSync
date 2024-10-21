@@ -30,8 +30,8 @@ namespace GoCardlessToYnabSync.Services
             _functionUriOptions = functionUriOptions.Value;
             _goCardlessOptions = goCardlessOptions.Value;
 
-            var httpClient = new HttpClient();
-            var credentials = new NordigenClientCredentials(_goCardlessOptions.SecretId, _goCardlessOptions.Secret);
+            HttpClient httpClient = new();
+            NordigenClientCredentials credentials = new(_goCardlessOptions.SecretId, _goCardlessOptions.Secret);
             _nordigenClient = new NordigenClient(httpClient, credentials);
         }
 

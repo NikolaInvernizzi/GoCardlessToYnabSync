@@ -26,8 +26,8 @@ namespace GoCardlessToYnabSync.Services
 
         public void SendAuthMail(string authLink, bool resend = false)
         {
-            MailMessage mailMessage = new MailMessage();
-            mailMessage.From = new MailAddress(_smptOptions.Email);
+            MailMessage mailMessage = new();
+            mailMessage.From = new(_smptOptions.Email);
             mailMessage.To.Add(_smptOptions.SendTo);
 
             if (!resend)
@@ -41,7 +41,7 @@ namespace GoCardlessToYnabSync.Services
                 mailMessage.Body = $"Hello {_smptOptions.Email}, \n\n Your Requistion ID has not been authenticated yet for the bank {_goCardlessOptions.BankId}, use the link below to authenticate the new one:\n {authLink}\n\n You will receive this mail everytime the Sync is executed and the Requistion ID has not been authenticated.";
             }
 
-            SmtpClient smtpClient = new SmtpClient();
+            using SmtpClient smtpClient = new();
             smtpClient.Host = _smptOptions.Host;
             smtpClient.Port = _smptOptions.Port;
             smtpClient.UseDefaultCredentials = false;
@@ -53,13 +53,13 @@ namespace GoCardlessToYnabSync.Services
 
         public void SendMail(string fullMessage, string subject)
         {
-            MailMessage mailMessage = new MailMessage();
-            mailMessage.From = new MailAddress(_smptOptions.Email);
+            MailMessage mailMessage = new();
+            mailMessage.From = new(_smptOptions.Email);
             mailMessage.To.Add(_smptOptions.SendTo);
             mailMessage.Subject = $"GoCardlessToYnabSync: {subject}";
             mailMessage.Body = $"Hello {_smptOptions.Email}, \n\n {subject}: {fullMessage}";
 
-            SmtpClient smtpClient = new SmtpClient();
+            using SmtpClient smtpClient = new();
             smtpClient.Host = _smptOptions.Host;
             smtpClient.Port = _smptOptions.Port;
             smtpClient.UseDefaultCredentials = false;
