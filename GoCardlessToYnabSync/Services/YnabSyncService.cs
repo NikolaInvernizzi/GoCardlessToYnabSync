@@ -157,16 +157,19 @@ namespace GoCardlessToYnabSync.Services
 
             // Create list of payee types
             // Todo: move to appsettings
-            List<(string Name, int? Index1, int? Index2, string? FallBackString)> listPayeeTypes = new List<(string, int?, int?, string?)>
+            List<(string Name, int? Index1, int? Index2, string? FallBackString, Func<string, string, (string payeeIndex1, string payeeIndex2)>? OverwriteFunction)> listPayeeTypes = new List<(string, int?, int?, string?, Func<string, string, (string, string)>?)>
             {
-                ("EUROPESE DOMICILIERING VAN", 1, 7, null),
-                ("MAANDELIJKSE BIJDRAGE", 1, null, null),
-                ("OVERSCHRIJVING IN EURO VAN REKENING", 2, null, null),
-                ("OVERSCHRIJVING IN EURO OP REKENING", 3, null, null),
-                ("MOBIELE BETALING", null, null, "MOBIELE BETALING (P2P)"),
-                ("STORTING VAN", 1, null, null),
-                ("BETALING AAN BANK CARD COMPANY", 1, null, null),
-                ("TERUGBETALING WOONKREDIET", null, null, "TERUGBETALING WOONKREDIET")
+                ("EUROPESE DOMICILIERING VAN", 1, 7, null, OverwriteEuropeseDomicilieringVan),
+                ("MAANDELIJKSE BIJDRAGE", 1, null, null, null),
+                ("OVERSCHRIJVING IN EURO VAN REKENING", 2, null, null, null),
+                ("OVERSCHRIJVING IN EURO OP REKENING", 3, null, null, null),
+                ("MOBIELE BETALING", null, null, "MOBIELE BETALING (P2P)", null),
+                ("STORTING VAN", 1, null, null, null),
+                ("BETALING AAN BANK CARD COMPANY", 1, null, null, null),
+                ("TERUGBETALING WOONKREDIET", null, null, "TERUGBETALING WOONKREDIET", null),
+                ("BETALING MET DEBETKAART", 3, null, null, OverwriteBetalingMetDebetkaart),
+                ("WERO OVERSCHRIJVING IN EURO", 1, 2, null, OverwriteWeroOverschrijvingInEuro),
+                ("GELDOPNEMING IN EURO", 4, null, null, OverwriteGeldOpnemingInEuro)
             };
             
             // Find payee type and extra payee from narrative string array
@@ -177,9 +180,11 @@ namespace GoCardlessToYnabSync.Services
                     if (!payeeType.Index1.HasValue && !payeeType.Index2.HasValue && !string.IsNullOrWhiteSpace(payeeType.FallBackString))
                         return payeeType.FallBackString;
 
-                    var result  = GetStringFromArray(payeeType.Index1, payeeType.Index2, stringArray);
+                    var result  = GetPayeeFromArray(payeeType.Index1, payeeType.Index2, stringArray, payeeType.OverwriteFunction);
                     if (!string.IsNullOrWhiteSpace(result))
+                    {
                         return result;
+                    }
                 }
             }
 
@@ -191,12 +196,114 @@ namespace GoCardlessToYnabSync.Services
             return string.Empty;
         }
 
-        private string GetStringFromArray(int? index1, int? index2, List<string> strings)
+        private string GetPayeeFromArray(int? index1, int? index2, List<string> strings, Func<string, string, (string, string)>? OverwriteFunction)
         {
-            var resultIndex1 = (index1.HasValue && strings.Count >= (index1.Value + 1)) ? strings.ElementAt(index1.Value) : null;
-            var resultIndex2 = (index2.HasValue && strings.Count >= (index2.Value + 1)) ? strings.ElementAt(index2.Value) : null;
-            var results = new[] { resultIndex1, resultIndex2 };
-            return string.Join(" - ", results.Where(r => !string.IsNullOrWhiteSpace(r)));
+            string resultIndex1 = ((index1.HasValue && strings.Count >= (index1.Value + 1)) ? strings.ElementAt(index1.Value) : string.Empty) ?? string.Empty;
+            string resultIndex2 = ((index2.HasValue && strings.Count >= (index2.Value + 1)) ? strings.ElementAt(index2.Value) : string.Empty) ?? string.Empty;
+
+            if (OverwriteFunction is not null)
+            {
+                var resultOverwriteFunction = OverwriteFunction(resultIndex1, resultIndex2);
+                resultIndex1 = resultOverwriteFunction.Item1;
+                resultIndex2 = resultOverwriteFunction.Item2;
+            }
+
+            var results = new[] { resultIndex1.Trim(), resultIndex2.Trim() };
+            var result = string.Join(" - ", results.Where(r => !string.IsNullOrWhiteSpace(r)));
+            return result;
+        }
+
+        private (string, string) OverwriteWeroOverschrijvingInEuro(string payeeIndex1, string payeeIndex2)
+        {
+            // example 1
+            // input: "LastName FirtName" and "BE94 #### #### ####"
+            // output: "LastName FirstName" and "BE94 #### #### ####"
+            //  nothing happened
+
+            // example 1
+            // input: "BE94 #### #### ####  BIC GEBABEBBXXX" and "LastName FirtName"
+            // output: "LastName FirstName" and "BE94 #### #### ####"
+            // swap inputs and cleanup accountnumber
+
+            if (payeeIndex1.StartsWith("BE") && payeeIndex1.Contains("BIC"))
+            {           
+                // cleanup
+                if(payeeIndex1.IndexOf("BIC") > -1)
+                    payeeIndex1 = payeeIndex1.Substring(0, payeeIndex1.IndexOf("BIC")).Trim();
+
+                // swap 
+                var temp = payeeIndex1;
+                payeeIndex1 = payeeIndex2;
+                payeeIndex2 = temp;
+            }
+
+            return (payeeIndex1, payeeIndex2);
+        }
+
+        private (string, string) OverwriteEuropeseDomicilieringVan(string payeeIndex1, string payeeIndex2)
+        {
+            // example1
+            // input: "TELENET BV" and "ACCOUNT: ############## REF : ###########"
+            // output: "TELENET BV" and "ACCOUNT: ##############"
+            // cleanup TELENET BV, ref not needed
+
+            // example2
+            // input: "Insurance123" and "FIRE INSURANCE 123-#######-90 10/01"
+            // output: "Insurance123" and "FIRE INSURANCE"
+            // cleanup extra info about the payment
+
+            if (payeeIndex1.Equals("TELENET BV", StringComparison.InvariantCultureIgnoreCase))
+            {
+                var index = payeeIndex2.IndexOf("REF");
+                if(index > -1)
+                    payeeIndex2 = payeeIndex2.Substring(0, index).Trim();
+            }
+            else
+            {
+                payeeIndex2 = RemoveDigits(payeeIndex2);
+                payeeIndex2 = RemoveTrailingCharacters(payeeIndex2, ['-', '/', ' ']);
+            }
+
+            return (payeeIndex1, payeeIndex2);
+        }
+
+        private (string, string) OverwriteBetalingMetDebetkaart(string payeeIndex1, string payeeIndex2)
+        {
+            // example1
+            // input: "SPOTIFY P##########" and ""
+            // output: "SPOTIFY" and ""
+            // cleanup payee
+
+            if (payeeIndex1.Contains("SPOTIFY P", StringComparison.InvariantCultureIgnoreCase))
+            {
+                payeeIndex1 = "SPOTIFY";
+            }
+
+            return (payeeIndex1, payeeIndex2);
+        }
+
+        private (string, string) OverwriteGeldOpnemingInEuro(string payeeIndex1, string payeeIndex2)
+        {
+            // example1
+            // input: "BC CASH CASH STA  CITY" and ""
+            // output: "CASH WITHDRAWAL" and "C CASH CASH STA  CITY"
+            // reorder and add info (only had this type once, so not sure if anything else needs to be overwritten)
+
+            payeeIndex2 = payeeIndex1;
+            payeeIndex1 = "CASH WITHDRAWAL";
+         
+            return (payeeIndex1, payeeIndex2);
+        }     
+
+        private string RemoveDigits(string text)
+        {
+            text = String.Concat(text.Where(c => !Char.IsDigit(c)));
+            return text;
+        }
+
+        private string RemoveTrailingCharacters(string text, char[] characters)
+        {
+            return text.Trim(characters);
         }
     }   
 }
