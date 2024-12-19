@@ -167,7 +167,7 @@ namespace GoCardlessToYnabSync.Services
                 ("STORTING VAN", 1, null, null, null),
                 ("BETALING AAN BANK CARD COMPANY", 1, null, null, null),
                 ("TERUGBETALING WOONKREDIET", null, null, "TERUGBETALING WOONKREDIET", null),
-                ("BETALING MET DEBETKAART", 3, null, null, OverwriteBetalingMetDebetkaart),
+                ("BETALING MET DEBETKAART", 2, null, null, OverwriteBetalingMetDebetkaart),
                 ("WERO OVERSCHRIJVING IN EURO", 1, 2, null, OverwriteWeroOverschrijvingInEuro),
                 ("GELDOPNEMING IN EURO", 4, null, null, OverwriteGeldOpnemingInEuro)
             };
