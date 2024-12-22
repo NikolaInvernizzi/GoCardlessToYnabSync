@@ -161,7 +161,7 @@ namespace GoCardlessToYnabSync.Services
             {
                 ("EUROPESE DOMICILIERING VAN", 1, 7, null, OverwriteEuropeseDomicilieringVan),
                 ("MAANDELIJKSE BIJDRAGE", 1, null, null, null),
-                ("OVERSCHRIJVING IN EURO VAN REKENING", 2, null, null, null),
+                ("OVERSCHRIJVING IN EURO VAN REKENING", 2, 3, null, OverschrijvingInEuroVanRekening), // todo if index1 contains 'BIC_' take index2 instead
                 ("OVERSCHRIJVING IN EURO OP REKENING", 3, null, null, null),
                 ("MOBIELE BETALING", null, null, "MOBIELE BETALING (P2P)", null),
                 ("STORTING VAN", 1, null, null, null),
@@ -211,6 +211,17 @@ namespace GoCardlessToYnabSync.Services
             var results = new[] { resultIndex1.Trim(), resultIndex2.Trim() };
             var result = string.Join(" - ", results.Where(r => !string.IsNullOrWhiteSpace(r)));
             return result;
+        }
+
+
+        private (string, string) OverschrijvingInEuroVanRekening(string payeeIndex1, string payeeIndex2)
+        {
+            if (payeeIndex1.StartsWith("BIC "))
+            {
+                payeeIndex1 = payeeIndex2 ?? string.Empty;
+                payeeIndex2 = string.Empty;
+            }            
+            return (payeeIndex1, payeeIndex2);
         }
 
         private (string, string) OverwriteWeroOverschrijvingInEuro(string payeeIndex1, string payeeIndex2)
