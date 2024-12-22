@@ -34,7 +34,7 @@ Requirements:
 
 
 ### Configuration
-The URIs are used by the timed Azure function sp it can trigger the Azure functions that do the logic
+The URIs are used by the timed Azure function so it can trigger the Azure functions that do the logic
 ```
   "FunctionUris": {
     "GoCardlessSync": "",
@@ -69,7 +69,7 @@ Gocardless Account information:
 
 **DaysInPastToRetrieve:** How many days of data to retrieve from GoCardless.  
 **SecretId/Secret:** [Get this from GoCardless](https://bankaccountdata.gocardless.com/user-secrets/) by creating a secret.  
-**BankId:**  See below, how to get your institution ID
+**BankId:**  See bottom of readme how to get your institution ID, not sure if this ID can be found another way.
 
 ```
   "GoCardless": {
@@ -81,9 +81,9 @@ Gocardless Account information:
 ```
   
 YNAB account information
-**Secret:** API KEY from YNAB
-**BudgetId:** the GUID for the budget, this GUID can be found in the URI when you are viewing a budget [https://app.ynab.com/#####-#####-#####-#####-#####/budget](#)
-**AccountName:** The name of the Account to add the transaction too
+**Secret:** API Key/Token from YNAB, Create a new personal access token [here](https://app.ynab.com/settings/developer).  
+**BudgetId:** the GUID for the budget, this GUID can be found in the URI when you are viewing a budget [https://app.ynab.com/#####-#####-#####-#####-#####/budget](#)  
+**AccountName:** The name of the Account to add the transaction too.  
 ```
   "Ynab": {
     "Secret": "",  // API key
@@ -100,7 +100,6 @@ YNAB account information
 
 Personally I currently have about a cost of 7 cents/month after using this for 3 months. 
 The storage Account is the most costly resource, but I think the Storage/Storage Account could be more efficiently configured for this case.
-
 
 
 ## Getting your Institution Id
