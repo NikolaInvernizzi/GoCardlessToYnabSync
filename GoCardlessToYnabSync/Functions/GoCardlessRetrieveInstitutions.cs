@@ -29,7 +29,7 @@ namespace GoCardlessToYnabSync.Functions
             try
             {
                 var country = req.Query["country"].FirstOrDefault();
-                if(country is not null)
+                if(country is not null && country.Length > 1)
                 {
                     country = char.ToUpper(country[0]) + country.Substring(1).ToLower();
                 }
