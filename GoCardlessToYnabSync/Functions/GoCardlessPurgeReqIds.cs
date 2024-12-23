@@ -8,23 +8,23 @@ using Microsoft.Extensions.Logging;
 
 namespace GoCardlessToYnabSync.Functions
 {
-    public class PurgeGoCardlessRequisitionIds
+    public class GoCardlessPurgeReqIds
     {
         private readonly ILogger<GoCardlessSync> _logger;
         private readonly GoCardlessSyncService _goCardlessSyncService;
         private readonly MailService _mailService;
 
-        public PurgeGoCardlessRequisitionIds(ILogger<GoCardlessSync> logger, GoCardlessSyncService goCardlessSyncService, MailService mailService)
+        public GoCardlessPurgeReqIds(ILogger<GoCardlessSync> logger, GoCardlessSyncService goCardlessSyncService, MailService mailService)
         {
             _logger = logger;
             _goCardlessSyncService = goCardlessSyncService;
             _mailService = mailService;
         }
 
-        [Function("PurgeGoCardlessRequisitionIds")]
+        [Function("GoCardlessPurgeRequisitionIds")]
         public async Task<IActionResult> Run([HttpTrigger(AuthorizationLevel.Function, "get")] HttpRequest req)
         {
-            _logger.LogInformation("GoCardlessSync HTTP function triggered");
+            _logger.LogInformation("GoCardless Purge Requisition Ids HTTP function triggered");
 
             string goCardlessResult;
             try

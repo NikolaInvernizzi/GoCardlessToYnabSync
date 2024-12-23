@@ -8,6 +8,7 @@ using GoCardlessToYnabSync.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Extensions.Options;
 using System.Net.Http;
+using RobinTTY.NordigenApiClient.Models.Requests;
 
 namespace GoCardlessToYnabSync.Services
 {
@@ -34,6 +35,24 @@ namespace GoCardlessToYnabSync.Services
             NordigenClientCredentials credentials = new(_goCardlessOptions.SecretId, _goCardlessOptions.Secret);
             _nordigenClient = new NordigenClient(httpClient, credentials);
         }
+
+
+        public async Task<string> GetInstitutionIds(SupportedCountry countryCode)
+        {
+            var result = "Institution Name                                          |ID\n----------------------------------------------------------|-------------------------------";
+            var institutionsResponse = await _nordigenClient.InstitutionsEndpoint.GetInstitutions("sLovAkiA");
+            if (institutionsResponse.IsSuccess)
+                institutionsResponse.Result.ForEach(institution =>
+                {
+                    result += $"\n{institution.Name.PadRight(58)}|{institution.Id}";
+                });
+            else
+                result += $"\nCouldn't retrieve institutions, error: {institutionsResponse.Error.Summary}";
+
+
+            return result;
+        }
+
 
         public async Task<int> RetrieveFromGoCardless()
         {
