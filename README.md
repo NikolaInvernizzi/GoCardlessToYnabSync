@@ -101,6 +101,9 @@ YNAB account information
 Personally I currently have about a cost of 7 cents/month after using this for 3 months. 
 The storage Account is the most costly resource, but I think the Storage/Storage Account could be more efficiently configured for this case.
 
+**Update 04/June/2025:**
+After using this sync for 9/10 months (+500 transactions) the total cost on Azure is 0.67cents, so it is still at 7 eurocents/month.
+
 
 ## Getting your Institution Id
 Send a request as below using postman or any other API Client, the secret_id and secret_key are created [here](https://bankaccountdata.gocardless.com/user-secrets/).
